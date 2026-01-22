@@ -66,6 +66,12 @@ function getVscodeLink({
   return vscodeLink;
 }
 
+function cleanFilePath(path) {
+  // Remove invisible Unicode characters like LEFT-TO-RIGHT MARK (U+200E), RIGHT-TO-LEFT MARK (U+200F),
+  // ZERO WIDTH SPACE (U+200B), ZERO WIDTH NON-JOINER (U+200C), ZERO WIDTH JOINER (U+200D), etc.
+  return path.replace(/[\u200B-\u200F\uFEFF]/g, '');
+}
+
 function isPrFileLink(linkUrl) {
   return PULL_REQUEST_PATH_REGEXP.test(linkUrl);
 }
@@ -78,7 +84,7 @@ function parseLink(linkUrl, selectionText, pageUrl) {
     const pathInfo = PULL_REQUEST_PATH_REGEXP.exec(path);
     const repo = pathInfo[1];
     const isFolder = false;
-    const file = selectionText;
+    const file = cleanFilePath(selectionText);
     let line = null;
     if (pageUrl.includes(linkUrl)) {
       line = pageUrl.replace(linkUrl, '').replace('R', '').replace('L', '');
@@ -101,7 +107,7 @@ function parseLink(linkUrl, selectionText, pageUrl) {
 
   const repo = pathInfo[1];
   const isFolder = pathInfo[2] === 'tree';
-  const file = pathInfo[3];
+  const file = cleanFilePath(pathInfo[3]);
 
   let line;
 
@@ -194,11 +200,21 @@ if (typeof chrome !== 'undefined' && chrome.contextMenus && chrome.action) {
   chrome.action.onClicked.addListener((({ url }) => {
     openInVscode({ linkUrl: url, pageUrl: url });
   }));
+
+  // Listen for messages from content scripts
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'openInVscode') {
+      openInVscode({ linkUrl: message.url, pageUrl: message.url })
+        .then(() => sendResponse({ success: true }))
+        .catch((error) => sendResponse({ success: false, error: error.message }));
+      return true; // Required for async sendResponse
+    }
+  });
 }
 
 // Expose pure functions for tests / debugging without breaking the extension runtime.
 // eslint-disable-next-line no-undef
 if (typeof module !== 'undefined' && module.exports) {
   // eslint-disable-next-line no-undef
-  module.exports = { getVscodeLink, parseLink, isPrFileLink };
+  module.exports = { getVscodeLink, parseLink, isPrFileLink, cleanFilePath };
 }
