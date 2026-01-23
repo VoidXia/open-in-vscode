@@ -35,24 +35,61 @@ const buttonHoverStyle = `
   color: white;
 `.replace(/\n/g, '');
 
-function createVSCodeButton(filePath) {
+const cursorButtonStyle = `
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #7c3aed;
+  background: transparent;
+  border: 1px solid #7c3aed;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-decoration: none;
+  vertical-align: middle;
+`.replace(/\n/g, '');
+
+const cursorButtonHoverStyle = `
+  background: #7c3aed;
+  color: white;
+`.replace(/\n/g, '');
+
+function createEditorButton(filePath, editor = 'vscode') {
+  const isCursor = editor === 'cursor';
   const button = document.createElement('button');
-  button.className = 'open-in-vscode-btn';
-  button.setAttribute('style', buttonStyle);
-  button.innerHTML = `
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M11.28 0L5.5 5.78 2.28 2.56 0 3.5v9l2.28.94L5.5 10.22 11.28 16 16 14.5v-13L11.28 0zM5.5 8.5l-2.72 2.72V4.78L5.5 7.5v1z"/>
-    </svg>
-    Open in VSCode
-  `;
-  button.title = 'Open this file in VSCode';
+  button.className = isCursor ? 'open-in-cursor-btn' : 'open-in-vscode-btn';
+  const style = isCursor ? cursorButtonStyle : buttonStyle;
+  const hoverStyle = isCursor ? cursorButtonHoverStyle : buttonHoverStyle;
+  button.setAttribute('style', style);
+  
+  if (isCursor) {
+    button.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M14.5 1.5l-13 5.5 5 2 2 5 5.5-13z"/>
+      </svg>
+      Cursor
+    `;
+    button.title = 'Open this file in Cursor';
+  } else {
+    button.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M11.28 0L5.5 5.78 2.28 2.56 0 3.5v9l2.28.94L5.5 10.22 11.28 16 16 14.5v-13L11.28 0zM5.5 8.5l-2.72 2.72V4.78L5.5 7.5v1z"/>
+      </svg>
+      VSCode
+    `;
+    button.title = 'Open this file in VSCode';
+  }
   
   button.addEventListener('mouseenter', () => {
-    button.setAttribute('style', buttonStyle + buttonHoverStyle);
+    button.setAttribute('style', style + hoverStyle);
   });
   
   button.addEventListener('mouseleave', () => {
-    button.setAttribute('style', buttonStyle);
+    button.setAttribute('style', style);
   });
   
   button.addEventListener('click', async (e) => {
@@ -70,34 +107,37 @@ function createVSCodeButton(filePath) {
       
       // Try to determine the ref (branch/commit)
       let ref = 'main'; // default
+      let fileUrl;
       if (pathParts[3] === 'pull') {
-        // For PRs, we'll use the current page URL
-        const fileUrl = `${currentUrl.origin}/${owner}/${repo}/blob/${ref}/${filePath}`;
-        await sendToBackground({
-          action: 'openInVscode',
-          url: fileUrl,
-        });
+        fileUrl = `${currentUrl.origin}/${owner}/${repo}/blob/${ref}/${filePath}`;
       } else if (pathParts[3] === 'commit') {
         const commitSha = pathParts[4];
-        const fileUrl = `${currentUrl.origin}/${owner}/${repo}/blob/${commitSha}/${filePath}`;
-        await sendToBackground({
-          action: 'openInVscode',
-          url: fileUrl,
-        });
+        fileUrl = `${currentUrl.origin}/${owner}/${repo}/blob/${commitSha}/${filePath}`;
       } else if (pathParts[3] === 'compare' || pathParts[3] === 'tree' || pathParts[3] === 'blob') {
         ref = pathParts[4];
-        const fileUrl = `${currentUrl.origin}/${owner}/${repo}/blob/${ref}/${filePath}`;
+        fileUrl = `${currentUrl.origin}/${owner}/${repo}/blob/${ref}/${filePath}`;
+      }
+      
+      if (fileUrl) {
         await sendToBackground({
-          action: 'openInVscode',
+          action: isCursor ? 'openInCursor' : 'openInVscode',
           url: fileUrl,
         });
       }
     } catch (error) {
-      console.error('Failed to open in VSCode:', error);
+      console.error(`Failed to open in ${isCursor ? 'Cursor' : 'VSCode'}:`, error);
     }
   });
   
   return button;
+}
+
+function createVSCodeButton(filePath) {
+  return createEditorButton(filePath, 'vscode');
+}
+
+function createCursorButton(filePath) {
+  return createEditorButton(filePath, 'cursor');
 }
 
 function injectButton(fileHeader) {
@@ -129,18 +169,21 @@ function injectButton(fileHeader) {
     return;
   }
   
-  // Create and inject the button
-  const button = createVSCodeButton(filePath);
+  // Create and inject the buttons
+  const vscodeButton = createVSCodeButton(filePath);
+  const cursorButton = createCursorButton(filePath);
   
   // Find the best place to insert the button
   const fileActions = fileHeader.querySelector('.file-actions, .file-header-actions');
   if (fileActions) {
-    fileActions.prepend(button);
+    fileActions.prepend(cursorButton);
+    fileActions.prepend(vscodeButton);
   } else {
     // Fallback: append to file info
     const fileInfo = fileHeader.querySelector('.file-info, .file-header-title');
     if (fileInfo) {
-      fileInfo.appendChild(button);
+      fileInfo.appendChild(vscodeButton);
+      fileInfo.appendChild(cursorButton);
     }
   }
 }
@@ -312,42 +355,77 @@ function injectBlobViewButton() {
     return;
   }
   
-  // Create the button
-  const button = document.createElement('button');
-  button.className = 'open-in-vscode-blob-btn';
-  button.setAttribute('style', buttonStyle);
-  button.innerHTML = `
+  // Create VSCode button
+  const vscodeButton = document.createElement('button');
+  vscodeButton.className = 'open-in-vscode-blob-btn';
+  vscodeButton.setAttribute('style', buttonStyle);
+  vscodeButton.innerHTML = `
     <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
       <path d="M11.28 0L5.5 5.78 2.28 2.56 0 3.5v9l2.28.94L5.5 10.22 11.28 16 16 14.5v-13L11.28 0zM5.5 8.5l-2.72 2.72V4.78L5.5 7.5v1z"/>
     </svg>
-    Open in VSCode
+    VSCode
   `;
-  button.title = 'Open this file in VSCode';
+  vscodeButton.title = 'Open this file in VSCode';
   
-  button.addEventListener('mouseenter', () => {
-    button.setAttribute('style', buttonStyle + buttonHoverStyle);
+  vscodeButton.addEventListener('mouseenter', () => {
+    vscodeButton.setAttribute('style', buttonStyle + buttonHoverStyle);
   });
   
-  button.addEventListener('mouseleave', () => {
-    button.setAttribute('style', buttonStyle);
+  vscodeButton.addEventListener('mouseleave', () => {
+    vscodeButton.setAttribute('style', buttonStyle);
   });
   
-  button.addEventListener('click', async (e) => {
+  vscodeButton.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
     
     try {
-      const response = await sendToBackground({
+      await sendToBackground({
         action: 'openInVscode',
         url: window.location.href,
       });
-      console.log('VSCode open response:', response);
     } catch (error) {
       console.error('Failed to open in VSCode:', error);
       alert('Failed to open in VSCode: ' + error.message);
     }
   });
   
-  // Insert the button right after the file info element (lines/size info)
-  fileInfoElement.parentNode.insertBefore(button, fileInfoElement.nextSibling);
+  // Create Cursor button
+  const cursorButton = document.createElement('button');
+  cursorButton.className = 'open-in-cursor-blob-btn';
+  cursorButton.setAttribute('style', cursorButtonStyle);
+  cursorButton.innerHTML = `
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M14.5 1.5l-13 5.5 5 2 2 5 5.5-13z"/>
+    </svg>
+    Cursor
+  `;
+  cursorButton.title = 'Open this file in Cursor';
+  
+  cursorButton.addEventListener('mouseenter', () => {
+    cursorButton.setAttribute('style', cursorButtonStyle + cursorButtonHoverStyle);
+  });
+  
+  cursorButton.addEventListener('mouseleave', () => {
+    cursorButton.setAttribute('style', cursorButtonStyle);
+  });
+  
+  cursorButton.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    try {
+      await sendToBackground({
+        action: 'openInCursor',
+        url: window.location.href,
+      });
+    } catch (error) {
+      console.error('Failed to open in Cursor:', error);
+      alert('Failed to open in Cursor: ' + error.message);
+    }
+  });
+  
+  // Insert the buttons right after the file info element (lines/size info)
+  fileInfoElement.parentNode.insertBefore(cursorButton, fileInfoElement.nextSibling);
+  fileInfoElement.parentNode.insertBefore(vscodeButton, fileInfoElement.nextSibling);
 }

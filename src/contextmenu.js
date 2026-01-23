@@ -66,6 +66,44 @@ function getVscodeLink({
   return vscodeLink;
 }
 
+function getCursorLink({
+  repo, file, isFolder, line,
+}, {
+  remoteHost, basePath, debug,
+}) {
+  let cursorLink = 'cursor';
+
+  // cursor://file/[path/to/file]:[line]
+  if (remoteHost !== '') {
+    cursorLink += `://vscode-remote/ssh-remote+${remoteHost}`;
+  } else {
+    cursorLink += '://file';
+  }
+
+  // windows paths don't start with slash
+  if (basePath[0] !== '/') {
+    cursorLink += '/';
+  }
+
+  cursorLink += `${basePath}/${repo}/${file}`;
+
+  // opening a folder and not a file
+  if (isFolder) {
+    cursorLink += '/';
+  }
+
+  if (line) {
+    cursorLink += `:${line}:1`;
+  }
+
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.log(`About to open Cursor link: ${cursorLink}`);
+  }
+
+  return cursorLink;
+}
+
 function cleanFilePath(path) {
   // Remove invisible Unicode characters like LEFT-TO-RIGHT MARK (U+200E), RIGHT-TO-LEFT MARK (U+200F),
   // ZERO WIDTH SPACE (U+200B), ZERO WIDTH NON-JOINER (U+200C), ZERO WIDTH JOINER (U+200D), etc.
@@ -178,6 +216,45 @@ async function openInVscode({ linkUrl, selectionText, pageUrl }) {
   }
 }
 
+async function openInCursor({ linkUrl, selectionText, pageUrl }) {
+  let tab;
+  try {
+    tab = await getCurrentTab();
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('Unexpected error');
+    // eslint-disable-next-line no-console
+    console.error(e);
+    return;
+  }
+
+  try {
+    const options = await getOptions();
+    const parsedLinkData = parseLink(linkUrl, selectionText, pageUrl);
+    const url = getCursorLink(parsedLinkData, options);
+    await chrome.scripting.executeScript(
+      {
+        target: { tabId: tab.id },
+        func: injectedWindowOpen,
+        args: [url],
+      },
+    );
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(e);
+    await chrome.scripting.executeScript(
+      {
+        target: { tabId: tab.id },
+        func: injectedAlert,
+        args: [e.message ?? e],
+      },
+    );
+    if (e.name === 'OptionValidationError') {
+      chrome.runtime.openOptionsPage();
+    }
+  }
+}
+
 // Guard Chrome extension specific registrations so requiring this file
 // in Node (tests) doesn't throw.
 if (typeof chrome !== 'undefined' && chrome.contextMenus && chrome.action) {
@@ -205,6 +282,12 @@ if (typeof chrome !== 'undefined' && chrome.contextMenus && chrome.action) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'openInVscode') {
       openInVscode({ linkUrl: message.url, pageUrl: message.url })
+        .then(() => sendResponse({ success: true }))
+        .catch((error) => sendResponse({ success: false, error: error.message }));
+      return true; // Required for async sendResponse
+    }
+    if (message.action === 'openInCursor') {
+      openInCursor({ linkUrl: message.url, pageUrl: message.url })
         .then(() => sendResponse({ success: true }))
         .catch((error) => sendResponse({ success: false, error: error.message }));
       return true; // Required for async sendResponse
